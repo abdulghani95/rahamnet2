@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b5fff">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<title>رهام نت</title>
+<style>
+:root{--bg:#f3f6fc;--card:#fff;--tx:#14213d;--mut:#6b7a99;--pri:#0b5fff;--pri2:#00c2ff;--ok:#12b76a;--bad:#f04438;--bd:#e3e9f5}
+@media(prefers-color-scheme:dark){:root{--bg:#0c1222;--card:#151d33;--tx:#eaf0ff;--mut:#93a1c4;--bd:#25304d}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;font-family:system-ui,"Segoe UI",Tahoma,Arial,sans-serif;background:var(--bg);color:var(--tx);padding-bottom:78px}
+header{background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;padding:calc(14px + env(safe-area-inset-top)) 16px 18px;border-radius:0 0 22px 22px}
+.top{display:flex;align-items:center;gap:10px}
+.logo{width:42px;height:42px;border-radius:12px;background:#fff3;display:grid;place-items:center}
+h1{font-size:20px;margin:0;flex:1}
+.pill{font-size:12px;padding:4px 10px;border-radius:99px;background:#fff3}
+.pill.off{background:#f044389e}
+.sub{margin:10px 2px 0;font-size:13px;opacity:.9}
+main{padding:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:14px;margin-bottom:12px}
+.card h3{margin:0 0 6px;font-size:16px}
+.mut{color:var(--mut);font-size:12.5px}
+.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sp{flex:1}
+.pk{display:flex;gap:12px;align-items:center}
+.speed{min-width:78px;text-align:center;background:linear-gradient(135deg,var(--pri),var(--pri2));color:#fff;border-radius:14px;padding:10px 6px}
+.speed b{font-size:24px;display:block;line-height:1}
+.speed span{font-size:11px}
+.price{font-size:18px;font-weight:700;color:var(--pri)}
+button{font:inherit;border:0;border-radius:12px;padding:10px 14px;background:var(--pri);color:#fff;cursor:pointer}
+button.sec{background:var(--bg);color:var(--tx);border:1px solid var(--bd)}
+button.del{background:var(--bad)}
+button.sm{padding:6px 10px;font-size:12.5px;border-radius:9px}
+input,textarea{width:100%;font:inherit;padding:10px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx);margin:4px 0 8px}
+label{font-size:13px;color:var(--mut)}
+nav{position:fixed;bottom:0;inset-inline:0;display:flex;background:var(--card);border-top:1px solid var(--bd);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
+nav button{flex:1;background:none;color:var(--mut);display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11.5px;padding:6px}
+nav button.on{color:var(--pri);font-weight:700}
+nav svg{width:22px;height:22px}
+.badge{background:var(--bad);color:#fff;border-radius:99px;font-size:10px;padding:1px 6px;margin-inline-start:4px}
+.new{background:var(--ok);color:#fff;font-size:10px;padding:2px 7px;border-radius:99px}
+dialog{border:0;border-radius:18px;padding:16px;width:min(92vw,420px);background:var(--card);color:var(--tx)}
+dialog::backdrop{background:#0008}
+.hero{display:grid;place-items:center;min-height:100vh;padding:20px;text-align:center}
+.hero .card{max-width:380px;width:100%}
+.hero button{width:100%;margin-top:10px}
+.toast{position:fixed;bottom:90px;inset-inline:16px;background:#14213d;color:#fff;padding:12px;border-radius:12px;text-align:center;z-index:9;display:none}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+<dialog id="dlg"></dialog>
+<script src="config.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const ld=(k,d)=>{try{const v=JSON.parse(localStorage.getItem(k));return v===null||v===undefined?d:v}catch{return d}};
+const sv=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
+const API=((window.RN_CONFIG&&RN_CONFIG.API_URL)||'').replace(/\/+$/,'');
+const NATIVE=!!(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform());
+
+const DEFAULT={updated:0,currency:'د.ع',notifications:[],
+ news:[{id:'n1',title:'مرحباً بكم في رهام نت',body:'نسعد بخدمتكم. تابعوا هنا آخر الأخبار والعروض.',date:'2026-11-25'}],
+ packages:[{id:'p1',name:'الأساسية',speed:10,price:15000,note:'للتصفح والتواصل'},
+ {id:'p2',name:'المميزة',speed:30,price:25000,note:'للعائلة والبث'},
+ {id:'p3',name:'البلاتينية',speed:100,price:50000,note:'ألعاب وتحميل سريع'}]};
+let data=ld('rn_data',DEFAULT),role=ld('rn_role',null),tab='news';
+let notifs=ld('rn_notifs',[]),okey=ld('rn_key',''),dirty=ld('rn_dirty',false),pend=ld('rn_pend',null),pushBound=false;
+
+function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',2800)}
+const fmt=d=>{try{return new Date(d).toLocaleString('ar')}catch{return ''}};
+
+/* ---------- الإشعارات داخل التطبيق ---------- */
+function mergeNotifs(list,first){
+  const ids=new Set(notifs.map(n=>n.id));let added=0;
+  for(const n of [...list].reverse()){
+    if(ids.has(n.id))continue;added++;
+    notifs.unshift({id:n.id,title:n.title,body:n.body,date:n.date,read:first});
+    if(!first&&!NATIVE&&'Notification' in window&&Notification.permission==='granted'){
+      navigator.serviceWorker?.getRegistration().then(r=>r&&r.showNotification(n.title,{body:n.body,icon:'icon.svg',dir:'rtl',lang:'ar'}));}
+  }
+  notifs=notifs.sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,50);sv('rn_notifs',notifs);return added;
+}
+async function askPerm(){
+  if(NATIVE)return initPush();
+  if(!('Notification' in window))return toast('المتصفح لا يدعم الإشعارات');
+  const r=await Notification.requestPermission();toast(r==='granted'?'تم تفعيل الإشعارات ✅':'لم يتم السماح');render();
+}
+
+/* ---------- الإشعارات الحقيقية (Firebase Cloud Messaging) ---------- */
+async function initPush(){
+  const P=window.Capacitor&&Capacitor.Plugins&&Capacitor.Plugins.PushNotifications;
+  if(!NATIVE||!P)return;
+  try{
+    let p=await P.checkPermissions();if(p.receive!=='granted')p=await P.requestPermissions();
+    sv('rn_push',p.receive);
+    if(p.receive!=='granted'){render();return}
+    if(!pushBound){pushBound=true;
+      P.addListener('registration',t=>{sv('rn_fcm',t.value);regDevice()});
+      P.addListener('registrationError',()=>toast('تعذر تسجيل الإشعارات'));
+      P.addListener('pushNotificationReceived',()=>sync());
+      P.addListener('pushNotificationActionPerformed',()=>{sync();go('bell')});
+    }
+    await P.register();render();
+  }catch(e){}
+}
+async function regDevice(){
+  const t=ld('rn_fcm','');if(!t||!API||!navigator.onLine||!role)return;
+  if(ld('rn_fcm_sent','')===t+role)return;
+  try{const r=await fetch(API+'/api/devices',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token:t,role})});
+    if(r.ok)sv('rn_fcm_sent',t+role)}catch{}
+}
+
+/* ---------- المزامنة مع السيرفر ---------- */
+async function sync(manual){
+  if(!API){if(manual)toast('لم يتم ضبط عنوان السيرفر');return}
+  if(!navigator.onLine){if(manual)toast('لا يوجد اتصال، يتم عرض آخر نسخة محفوظة');return}
+  try{
+    if(role==='owner'&&dirty)await pushData();
+    const r=await fetch(API+'/api/data?t='+Date.now(),{cache:'no-store'});if(!r.ok)throw 0;
+    const d=await r.json();const first=!ld('rn_init',false);
+    if(!(role==='owner'&&dirty)){
+      const changed=d.updated!==data.updated;
+      data={...data,currency:d.currency,news:d.news,packages:d.packages,updated:d.updated};sv('rn_data',data);
+      mergeNotifs(d.notifications||[],first);sv('rn_init',true);render();
+      if(manual)toast(changed?'تم التحديث ✅':'أنت على آخر نسخة');
+    }
+    regDevice();
+  }catch(e){if(manual)toast('تعذر التحديث، يتم عرض النسخة المحفوظة')}
+}
+async function pushData(notify){
+  if(notify)pend=notify;
+  const body={currency:data.currency,news:data.news,packages:data.packages,notify:pend};
+  const r=await fetch(API+'/api/data',{method:'PUT',headers:{'content-type':'application/json','x-owner-key':okey},body:JSON.stringify(body)});
+  if(r.status===401){toast('الرمز السري غير صحيح');setRole(null);throw 0}
+  if(!r.ok)throw 0;
+  const d=await r.json();data={...data,...d};delete data.notifications;sv('rn_data',data);
+  mergeNotifs(d.notifications||[],true);
+  dirty=false;pend=null;sv('rn_dirty',false);sv('rn_pend',null);
+}
+function save(notify){
+  sv('rn_data',data);dirty=true;sv('rn_dirty',true);if(notify){pend=notify;sv('rn_pend',pend)}
+  render();
+  if(!navigator.onLine)return toast('تم الحفظ، وسيُنشر عند عودة النت');
+  pushData().then(()=>{render();toast('تم النشر للعملاء ✅')}).catch(()=>toast('تعذر النشر الآن، سيُعاد لاحقاً'));
+}
+
+/* ---------- الواجهة ---------- */
+const ic={
+ news:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h13v14H6a2 2 0 0 1-2-2V5zM17 8h3v9a2 2 0 0 1-2 2M8 9h5M8 13h5"/></svg>',
+ pk:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1"/></svg>',
+ bell:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/></svg>',
+ set:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2-1.2L14 3h-4l-.6 2.7a7 7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2 1.2L10 21h4l.6-2.7a7 7 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"/></svg>'};
+const logo='<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M2 9a15 15 0 0 1 20 0M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19.5" r="1" fill="#fff"/></svg>';
+
+function render(){
+  const app=$('#app');
+  if(!role){
+    app.innerHTML=`<div class="hero"><div class="card"><div class="logo" style="background:var(--pri);margin:0 auto 10px;width:60px;height:60px">${logo}</div>
+    <h2 style="margin:0">رهام نت</h2><p class="mut">اختر نوع الحساب</p>
+    <button onclick="setRole('customer')">👤 أنا عميل</button>
+    <button class="sec" onclick="ownerLogin()">🛠️ أنا صاحب العمل</button></div></div>`;return}
+  const own=role==='owner',unread=notifs.filter(n=>!n.read).length;
+  const tabs=[['news','الأخبار',ic.news],['pk','الباقات',ic.pk],['bell','الإشعارات',ic.bell],['set',own?'الإدارة':'الإعدادات',ic.set]];
+  app.innerHTML=`<header><div class="top"><div class="logo">${logo}</div><h1>رهام نت</h1>
+   <span class="pill ${navigator.onLine?'':'off'}">${navigator.onLine?'متصل':'بدون نت'}</span></div>
+   <div class="sub">${own?'🛠️ نسخة صاحب العمل'+(dirty?' • بانتظار النشر':''):'👤 نسخة العميل'}</div></header>
+   <main>${view(own)}</main>
+   <nav>${tabs.map(t=>`<button class="${tab===t[0]?'on':''}" onclick="go('${t[0]}')">${t[2]}<span>${t[1]}${t[0]==='bell'&&unread?`<span class="badge">${unread}</span>`:''}</span></button>`).join('')}</nav>`;
+}
+function go(t){tab=t;if(t==='bell'){notifs.forEach(n=>n.read=true);sv('rn_notifs',notifs)}render();scrollTo(0,0)}
+
+function view(own){
+  if(tab==='news')return (own?'<button onclick="editNews()" style="width:100%;margin-bottom:12px">➕ خبر جديد</button>':'')+
+    (data.news.length?data.news.map(n=>`<div class="card"><div class="row"><h3 class="sp">${esc(n.title)}</h3>${!own&&Date.now()-new Date(n.date)<3*864e5?'<span class="new">جديد</span>':''}</div>
+    <div>${esc(n.body).replace(/\n/g,'<br>')}</div><div class="row" style="margin-top:8px"><span class="mut sp">${esc(n.date)}</span>
+    ${own?`<button class="sm sec" onclick="editNews('${esc(n.id)}')">تعديل</button><button class="sm del" onclick="delItem('news','${esc(n.id)}')">حذف</button>`:''}</div></div>`).join(''):'<p class="mut">لا توجد أخبار.</p>');
+  if(tab==='pk')return (own?'<button onclick="editPk()" style="width:100%;margin-bottom:12px">➕ باقة جديدة</button>':'')+
+    data.packages.map(p=>`<div class="card"><div class="pk"><div class="speed"><b>${+p.speed}</b><span>Mbps</span></div>
+    <div class="sp"><h3>${esc(p.name)}</h3><div class="mut">${esc(p.note)}</div><div class="price">${Number(p.price).toLocaleString('en')} ${esc(data.currency)} <span class="mut">/ شهر</span></div></div></div>
+    ${own?`<div class="row" style="margin-top:10px"><button class="sm sec" onclick="editPk('${esc(p.id)}')">تعديل</button><button class="sm del" onclick="delItem('packages','${esc(p.id)}')">حذف</button></div>`:''}</div>`).join('');
+  if(tab==='bell')return (notifs.length?notifs.map(n=>`<div class="card"><h3>${esc(n.title)}</h3><div>${esc(n.body)}</div><div class="mut" style="margin-top:6px">${esc(fmt(n.date))}</div></div>`).join(''):'<p class="mut">لا توجد إشعارات بعد.</p>');
+  return own?ownerPanel():custSettings();
+}
+function permCard(){
+  let st;
+  if(NATIVE){const p=ld('rn_push','');st=p==='granted'?'مفعّلة ✅':p==='denied'?'محظورة (فعّلها من إعدادات الجهاز)':'غير مفعّلة'}
+  else{const p='Notification' in window?Notification.permission:'unsupported';st=p==='granted'?'مفعّلة ✅':p==='denied'?'محظورة':p==='unsupported'?'غير مدعومة':'غير مفعّلة'}
+  return `<div class="card"><h3>🔔 الإشعارات</h3><div class="mut">الحالة: ${st}</div><button style="margin-top:8px" onclick="askPerm()">تفعيل الإشعارات</button></div>`}
+function custSettings(){
+  return permCard()+`<div class="card"><h3>🔄 التحديث</h3><div class="mut">يتم التحديث تلقائياً، وكل شيء يبقى محفوظاً بدون نت.</div>
+  <button style="margin-top:8px" onclick="sync(true)">تحديث الآن</button></div>
+  <div class="card"><button class="sec" onclick="setRole(null)">تغيير نوع الحساب</button></div>`}
+function ownerPanel(){
+  return `<div class="card"><h3>📣 إرسال إشعار للعملاء</h3><label>العنوان</label><input id="bt"><label>النص</label><textarea id="bb" rows="3"></textarea>
+   <button onclick="broadcast()" style="width:100%">إرسال الآن</button></div>
+   <div class="card"><h3>⚙️ الإعدادات</h3><label>العملة</label><input id="cur" value="${esc(data.currency)}">
+   <button class="sec" onclick="data.currency=$('#cur').value.trim()||data.currency;save()">حفظ العملة</button></div>`+permCard()+
+   `<div class="card"><button class="sec" onclick="sync(true)">مزامنة الآن</button> <button class="sec" onclick="setRole(null)">تسجيل خروج</button></div>`}
+
+/* ---------- العمليات ---------- */
+function setRole(r){
+  role=r;sv('rn_role',r);if(r!=='owner'){okey='';sv('rn_key','')}
+  tab='news';render();if(r){sync();initPush()}
+}
+function ownerLogin(){
+  if(!API)return toast('لم يتم ضبط عنوان السيرفر');
+  const d=$('#dlg');d.innerHTML=`<h3>رمز صاحب العمل</h3><input id="pp" type="password" placeholder="الرمز السري (OWNER_KEY)">
+  <div class="row" style="margin-top:10px"><button onclick="chk()">دخول</button><button class="sec" onclick="$('#dlg').close()">إلغاء</button></div>`;d.showModal()}
+async function chk(){
+  const k=$('#pp').value;if(!k)return;
+  if(!navigator.onLine)return toast('تسجيل الدخول يحتاج اتصالاً بالنت');
+  try{
+    const r=await fetch(API+'/api/owner/check',{method:'POST',headers:{'x-owner-key':k}});
+    if(r.ok){okey=k;sv('rn_key',k);$('#dlg').close();setRole('owner')}
+    else toast(r.status===429?'محاولات كثيرة، انتظر دقيقة':'رمز خاطئ');
+  }catch{toast('تعذر الوصول للسيرفر')}
+}
+function delItem(k,id){if(confirm('تأكيد الحذف؟')){data[k]=data[k].filter(x=>x.id!==id);save()}}
+function editNews(id){
+  const n=data.news.find(x=>x.id===id)||{title:'',body:''};const d=$('#dlg');
+  d.innerHTML=`<h3>${id?'تعديل':'إضافة'} خبر</h3><label>العنوان</label><input id="t" value="${esc(n.title)}"><label>التفاصيل</label><textarea id="b" rows="5">${esc(n.body)}</textarea>
+  <label><input type="checkbox" id="nt" style="width:auto" ${id?'':'checked'}> إرسال إشعار للعملاء</label>
+  <div class="row" style="margin-top:10px"><button onclick="svNews('${esc(id||'')}')">حفظ ونشر</button><button class="sec" onclick="$('#dlg').close()">إلغاء</button></div>`;d.showModal()}
+function svNews(id){
+  const t=$('#t').value.trim(),b=$('#b').value.trim();if(!t)return toast('اكتب العنوان');
+  const nt=$('#nt').checked;
+  if(id){const n=data.news.find(x=>x.id===id);n.title=t;n.body=b}
+  else data.news.unshift({id:uid(),title:t,body:b,date:new Date().toISOString().slice(0,10)});
+  $('#dlg').close();save(nt?{title:'📰 '+t,body:b.slice(0,200)}:null)}
+function editPk(id){
+  const p=data.packages.find(x=>x.id===id)||{name:'',speed:'',price:'',note:''};const d=$('#dlg');
+  d.innerHTML=`<h3>${id?'تعديل':'إضافة'} باقة</h3><label>الاسم</label><input id="pn" value="${esc(p.name)}">
+  <label>السرعة (Mbps)</label><input id="ps" type="number" value="${esc(p.speed)}"><label>السعر الشهري</label><input id="pr" type="number" value="${esc(p.price)}">
+  <label>ملاحظة</label><input id="pt" value="${esc(p.note)}"><label><input type="checkbox" id="nt" style="width:auto"> إشعار العملاء بتغيير الباقات</label>
+  <div class="row" style="margin-top:10px"><button onclick="svPk('${esc(id||'')}')">حفظ ونشر</button><button class="sec" onclick="$('#dlg').close()">إلغاء</button></div>`;d.showModal()}
+function svPk(id){
+  const o={name:$('#pn').value.trim(),speed:+$('#ps').value,price:+$('#pr').value,note:$('#pt').value.trim()};if(!o.name||!o.speed)return toast('أكمل البيانات');
+  const nt=$('#nt').checked;
+  if(id)Object.assign(data.packages.find(x=>x.id===id),o);else data.packages.push({id:uid(),...o});
+  $('#dlg').close();save(nt?{title:'📶 تحديث الباقات',body:`${o.name}: ${o.speed} Mbps بسعر ${o.price.toLocaleString('en')} ${data.currency}`}:null)}
+async function broadcast(){
+  const t=$('#bt').value.trim(),b=$('#bb').value.trim();if(!t)return toast('اكتب العنوان');
+  if(!navigator.onLine)return toast('الإرسال يحتاج اتصالاً بالنت');
+  try{
+    const r=await fetch(API+'/api/broadcast',{method:'POST',headers:{'content-type':'application/json','x-owner-key':okey},body:JSON.stringify({title:t,body:b})});
+    if(!r.ok)throw 0;toast('تم إرسال الإشعار ✅');$('#bt').value='';$('#bb').value='';sync();
+  }catch{toast('تعذر الإرسال')}
+}
+
+addEventListener('online',()=>{render();sync()});addEventListener('offline',render);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)sync()});
+if(!NATIVE&&'serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+render();sync();if(role)initPush();setInterval(sync,3*60*1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Write server URL into the app
+        env:
+          API_URL: ${{ secrets.API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then echo "::error::Missing secret API_URL"; exit 1; fi
+          printf 'window.RN_CONFIG = { API_URL: %s };\n' "$(node -p 'JSON.stringify(process.env.API_URL)')" > www/config.js
+
+      - name: Create Android project
+        run: npx cap add android
+
+      - name: Add Firebase config
+        env:
+          GSJ: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$GSJ" ]; then echo "::error::Missing secret GOOGLE_SERVICES_JSON"; exit 1; fi
+          case "$GSJ" in
+            "{"*) printf '%s' "$GSJ" > android/app/google-services.json ;;
+            *) echo "$GSJ" | base64 -d > android/app/google-services.json ;;
+          esac
+          test -s android/app/google-services.json
+
+      - name: Use fixed signing key (so updates install over old versions)
+        env:
+          KS: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS" ]; then
+            mkdir -p ~/.android
+            echo "$KS" | base64 -d > ~/.android/debug.keystore
+          else
+            echo "::warning::KEYSTORE_B64 not set: each build gets a new signing key"
+          fi
+
+      - name: Sync web files
+        run: npx cap sync android
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk RahamNet.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RahamNet-APK
+          path: RahamNet.apk
+
+      - name: Publish release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: RahamNet.apk
