@@ -1,66 +1,76 @@
 'use strict';
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 const admin = require('firebase-admin');
 
 const PORT = process.env.PORT || 3000;
 const OWNER_KEY = process.env.OWNER_KEY || '';
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-
 if (OWNER_KEY.length < 6) { console.error('Set OWNER_KEY (at least 6 characters)'); process.exit(1); }
-fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const SEED = {
+/* ---------- Firebase: Firestore (storage) + FCM (push) ---------- */
+const raw = (process.env.FIREBASE_SERVICE_ACCOUNT || '').trim();
+if (!raw) { console.error('Set FIREBASE_SERVICE_ACCOUNT'); process.exit(1); }
+try {
+  const json = JSON.parse(raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8'));
+  admin.initializeApp({ credential: admin.credential.cert(json) });
+} catch (e) { console.error('Firebase init failed:', e.message); process.exit(1); }
+const fs = admin.firestore();
+const fcm = admin.messaging();
+const dataRef = fs.collection('rahamnet').doc('data');
+const devCol = fs.collection('devices');
+
+const seed = () => ({
   updated: Date.now(), currency: 'د.ع',
   news: [{ id: 'n1', title: 'مرحباً بكم في رهام نت', body: 'نسعد بخدمتكم. تابعوا هنا آخر الأخبار والعروض.', date: new Date().toISOString().slice(0, 10) }],
   packages: [
     { id: 'p1', name: 'الأساسية', speed: 10, price: 15000, note: 'للتصفح والتواصل' },
     { id: 'p2', name: 'المميزة', speed: 30, price: 25000, note: 'للعائلة والبث' },
     { id: 'p3', name: 'البلاتينية', speed: 100, price: 50000, note: 'ألعاب وتحميل سريع' }],
-  notifications: [], devices: []
-};
-let db;
-try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch { db = structuredClone(SEED); persist(); }
-function persist() { const t = DB_FILE + '.tmp'; fs.writeFileSync(t, JSON.stringify(db)); fs.renameSync(t, DB_FILE); }
+  notifications: []
+});
 
-/* ---------- Firebase Cloud Messaging ---------- */
-let fcm = null;
-try {
-  const raw = (process.env.FIREBASE_SERVICE_ACCOUNT || '').trim();
-  if (raw) {
-    const json = JSON.parse(raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8'));
-    admin.initializeApp({ credential: admin.credential.cert(json) });
-    fcm = admin.messaging();
-    console.log('FCM ready');
-  } else console.warn('FIREBASE_SERVICE_ACCOUNT not set: push disabled');
-} catch (e) { console.error('Firebase init failed:', e.message); }
+let db = seed();
+const devices = new Map(); // token -> {token, role, added}
+const devId = t => crypto.createHash('sha1').update(t).digest('hex');
 
+async function loadAll() {
+  const s = await dataRef.get();
+  if (s.exists) db = { ...seed(), ...s.data() }; else await dataRef.set(db);
+  const ds = await devCol.get();
+  ds.forEach(d => { const x = d.data(); devices.set(x.token, x); });
+  console.log('Loaded from Firestore. devices:', devices.size);
+}
+const persist = () => dataRef.set(db);
+
+/* ---------- Push ---------- */
 async function pushAll(n) {
-  if (!fcm || !db.devices.length) return;
-  const dead = new Set();
-  for (let i = 0; i < db.devices.length; i += 500) {
-    const chunk = db.devices.slice(i, i + 500);
+  const all = [...devices.keys()];
+  if (!all.length) return;
+  const dead = [];
+  for (let i = 0; i < all.length; i += 500) {
+    const chunk = all.slice(i, i + 500);
     const r = await fcm.sendEachForMulticast({
-      tokens: chunk.map(d => d.token),
+      tokens: chunk,
       notification: { title: n.title, body: n.body },
       data: { id: n.id },
       android: { priority: 'high' }
     });
     r.responses.forEach((x, j) => {
       const c = x.error && x.error.code;
-      if (c === 'messaging/registration-token-not-registered' || c === 'messaging/invalid-registration-token') dead.add(chunk[j].token);
+      if (c === 'messaging/registration-token-not-registered' || c === 'messaging/invalid-registration-token') dead.push(chunk[j]);
     });
   }
-  if (dead.size) { db.devices = db.devices.filter(d => !dead.has(d.token)); persist(); }
+  if (dead.length) {
+    const b = fs.batch();
+    dead.forEach(t => { devices.delete(t); b.delete(devCol.doc(devId(t))); });
+    await b.commit();
+  }
 }
-function addNotification(title, body) {
+async function addNotification(title, body) {
   const n = { id: crypto.randomUUID(), title: clip(title, 120), body: clip(body, 500), date: new Date().toISOString() };
   db.notifications.unshift(n); db.notifications = db.notifications.slice(0, 30);
-  db.updated = Date.now(); persist();
+  db.updated = Date.now(); await persist();
   pushAll(n).catch(e => console.error('push error:', e.message));
   return n;
 }
@@ -78,10 +88,11 @@ function auth(req, res, next) {
   f.n++; fails.set(ip, f);
   res.status(401).json({ error: 'unauthorized' });
 }
+const wrap = fn => (req, res) => fn(req, res).catch(e => { console.error(e); res.status(500).json({ error: 'server_error' }); });
 const pub = () => ({ updated: db.updated, currency: db.currency, news: db.news, packages: db.packages, notifications: db.notifications });
 function cleanNews(a) {
-  if (!Array.isArray(a) || a.length > 200) throw new Error('bad news');
-  return a.map(n => ({ id: clip(n.id, 40) || crypto.randomUUID(), title: clip(n.title, 200), body: clip(n.body, 4000), date: clip(n.date, 40) }));
+  if (!Array.isArray(a) || a.length > 100) throw new Error('bad news');
+  return a.map(n => ({ id: clip(n.id, 40) || crypto.randomUUID(), title: clip(n.title, 200), body: clip(n.body, 2000), date: clip(n.date, 40) }));
 }
 function cleanPk(a) {
   if (!Array.isArray(a) || a.length > 50) throw new Error('bad packages');
@@ -95,38 +106,39 @@ app.use(cors());
 app.use(express.json({ limit: '300kb' }));
 
 app.get('/', (_, res) => res.send('RahamNet server OK'));
-app.get('/health', (_, res) => res.json({ ok: true, devices: db.devices.length, push: !!fcm }));
+app.get('/health', (_, res) => res.json({ ok: true, devices: devices.size, push: true, storage: 'firestore' }));
 app.get('/api/data', (_, res) => res.set('Cache-Control', 'no-store').json(pub()));
-
 app.post('/api/owner/check', auth, (_, res) => res.json({ ok: true }));
 
-app.put('/api/data', auth, (req, res) => {
-  try {
-    const b = req.body || {};
-    db.news = cleanNews(b.news); db.packages = cleanPk(b.packages);
-    db.currency = clip(b.currency, 12) || db.currency;
-    db.updated = Date.now(); persist();
-    if (b.notify && b.notify.title) addNotification(b.notify.title, b.notify.body);
-    res.json(pub());
-  } catch (e) { res.status(400).json({ error: e.message }); }
-});
+app.put('/api/data', auth, wrap(async (req, res) => {
+  const b = req.body || {};
+  let news, packages;
+  try { news = cleanNews(b.news); packages = cleanPk(b.packages); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  db.news = news; db.packages = packages;
+  db.currency = clip(b.currency, 12) || db.currency;
+  db.updated = Date.now(); await persist();
+  if (b.notify && b.notify.title) await addNotification(b.notify.title, b.notify.body);
+  res.json(pub());
+}));
 
-app.post('/api/broadcast', auth, (req, res) => {
+app.post('/api/broadcast', auth, wrap(async (req, res) => {
   const { title, body } = req.body || {};
   if (!title) return res.status(400).json({ error: 'title_required' });
-  res.json(addNotification(title, body));
-});
+  res.json(await addNotification(title, body));
+}));
 
-app.post('/api/devices', (req, res) => {
+app.post('/api/devices', wrap(async (req, res) => {
   const token = clip(req.body && req.body.token, 400);
   const role = req.body && req.body.role === 'owner' ? 'owner' : 'customer';
   if (token.length < 20) return res.status(400).json({ error: 'bad_token' });
-  const d = db.devices.find(x => x.token === token);
-  if (d) d.role = role; else {
-    if (db.devices.length >= 50000) return res.status(507).json({ error: 'full' });
-    db.devices.push({ token, role, added: new Date().toISOString() });
-  }
-  persist(); res.json({ ok: true });
-});
+  if (!devices.has(token) && devices.size >= 50000) return res.status(507).json({ error: 'full' });
+  const d = { token, role, added: (devices.get(token) || {}).added || new Date().toISOString() };
+  devices.set(token, d);
+  await devCol.doc(devId(token)).set(d);
+  res.json({ ok: true });
+}));
 
-app.listen(PORT, () => console.log('RahamNet server on :' + PORT));
+loadAll()
+  .then(() => app.listen(PORT, () => console.log('RahamNet server on :' + PORT)))
+  .catch(e => { console.error('Startup failed (is Firestore enabled?):', e.message); process.exit(1); });
