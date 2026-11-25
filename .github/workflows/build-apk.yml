@@ -37,6 +37,112 @@ jobs:
       - name: Create Android project
         run: npx cap add android
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Apply app icon
+        run: |
+          pip install pillow
+          python3 - <<'PY'
+          import math, os
+          from PIL import Image, ImageDraw
+
+          RES = os.environ.get("RES_DIR", "android/app/src/main/res")
+          SRC = "assets/icon.png"
+          C1, C2 = (11, 95, 255), (0, 194, 255)
+          DENS = {"mdpi": (48, 108), "hdpi": (72, 162), "xhdpi": (96, 216), "xxhdpi": (144, 324), "xxxhdpi": (192, 432)}
+
+
+          def glyph(px, k=1.0):
+              ss = 4
+              n = px * ss
+              im = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+              d = ImageDraw.Draw(im)
+              cx = n * 0.5
+              cy = n * (0.5 + (0.72 - 0.51) * k)
+              wn = 0.075 * k * n
+              for r in (0.16, 0.30, 0.44):
+                  rc = r * k * n
+                  ro = rc + wn / 2
+                  d.arc([cx - ro, cy - ro, cx + ro, cy + ro], 225, 315, fill="white", width=int(round(wn)))
+                  for a in (225, 315):
+                      x = cx + rc * math.cos(math.radians(a))
+                      y = cy + rc * math.sin(math.radians(a))
+                      d.ellipse([x - wn / 2, y - wn / 2, x + wn / 2, y + wn / 2], fill="white")
+              rd = 0.058 * k * n
+              d.ellipse([cx - rd, cy - rd, cx + rd, cy + rd], fill="white")
+              return im.resize((px, px), Image.LANCZOS)
+
+
+          def gradient(px):
+              im = Image.new("RGB", (px, px))
+              pts = []
+              for y in range(px):
+                  for x in range(px):
+                      t = (x + y) / (2.0 * (px - 1))
+                      pts.append(tuple(int(C1[i] + (C2[i] - C1[i]) * t) for i in range(3)))
+              im.putdata(pts)
+              return im
+
+
+          def mask(px, circle):
+              ss = 4
+              m = Image.new("L", (px * ss, px * ss), 0)
+              d = ImageDraw.Draw(m)
+              if circle:
+                  d.ellipse([0, 0, px * ss - 1, px * ss - 1], fill=255)
+              else:
+                  d.rounded_rectangle([0, 0, px * ss - 1, px * ss - 1], radius=int(px * ss * 0.22), fill=255)
+              return m.resize((px, px), Image.LANCZOS)
+
+
+          def legacy(px, circle):
+              if os.path.exists(SRC):
+                  base = Image.open(SRC).convert("RGBA").resize((px, px), Image.LANCZOS)
+              else:
+                  base = gradient(px).convert("RGBA")
+                  base.alpha_composite(glyph(px, 1.0))
+              out = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+              out.paste(base, (0, 0), mask(px, circle))
+              return out
+
+
+          def foreground(px):
+              if os.path.exists(SRC):
+                  s = int(px * 0.62)
+                  ic = Image.open(SRC).convert("RGBA").resize((s, s), Image.LANCZOS)
+                  out = Image.new("RGBA", (px, px), (0, 0, 0, 0))
+                  out.paste(ic, ((px - s) // 2, (px - s) // 2), ic)
+                  return out
+              return glyph(px, 0.85)
+
+
+          for name, (lp, fp) in DENS.items():
+              d = os.path.join(RES, "mipmap-" + name)
+              os.makedirs(d, exist_ok=True)
+              legacy(lp, False).save(os.path.join(d, "ic_launcher.png"))
+              legacy(lp, True).save(os.path.join(d, "ic_launcher_round.png"))
+              foreground(fp).save(os.path.join(d, "rn_foreground.png"))
+
+          os.makedirs(os.path.join(RES, "drawable"), exist_ok=True)
+          if os.path.exists(SRC):
+              c = Image.open(SRC).convert("RGB").getpixel((2, 2))
+              bg = '<?xml version="1.0" encoding="utf-8"?>\n<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">\n  <solid android:color="#%02x%02x%02x"/>\n</shape>\n' % c
+          else:
+              bg = ('<?xml version="1.0" encoding="utf-8"?>\n<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">\n'
+                    '  <gradient android:angle="315" android:startColor="#0B5FFF" android:endColor="#00C2FF"/>\n</shape>\n')
+          open(os.path.join(RES, "drawable", "rn_bg.xml"), "w").write(bg)
+
+          ad = os.path.join(RES, "mipmap-anydpi-v26")
+          os.makedirs(ad, exist_ok=True)
+          xml = ('<?xml version="1.0" encoding="utf-8"?>\n<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">\n'
+                 '  <background android:drawable="@drawable/rn_bg"/>\n  <foreground android:drawable="@mipmap/rn_foreground"/>\n</adaptive-icon>\n')
+          for n in ("ic_launcher.xml", "ic_launcher_round.xml"):
+              open(os.path.join(ad, n), "w").write(xml)
+          print("icons written to", RES)
+          PY
+
       - name: Add Firebase config
         env:
           GSJ: ${{ secrets.GOOGLE_SERVICES_JSON }}
